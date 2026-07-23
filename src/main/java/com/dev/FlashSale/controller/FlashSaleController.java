@@ -4,6 +4,8 @@ package com.dev.FlashSale.controller;
 import com.dev.FlashSale.DTOs.OrderPlacedEvent;
 import com.dev.FlashSale.DTOs.OrderRequest;
 
+import com.dev.FlashSale.entity.Item;
+import com.dev.FlashSale.repo.ItemRepository;
 import com.dev.FlashSale.service.OrderProducer;
 import com.dev.FlashSale.service.RedisInventoryService;
 import org.springframework.http.HttpStatus;
@@ -18,81 +20,54 @@ public class FlashSaleController {
 
     private final RedisInventoryService redisInventoryService;
     private final OrderProducer orderProducer;
+    private final ItemRepository itemRepository;
 
-    public FlashSaleController(RedisInventoryService redisInventoryService, OrderProducer orderProducer) {
+    public FlashSaleController(RedisInventoryService redisInventoryService, OrderProducer orderProducer, ItemRepository itemRepository) {
         this.redisInventoryService = redisInventoryService;
         this.orderProducer = orderProducer;
+        this.itemRepository = itemRepository;
     }
 
-    // High-concurrency optimized flash sale checkout
+
+
+    @PostMapping("/items")
+    public ResponseEntity<Item> createItem(@RequestParam String title, @RequestParam Integer stock) {
+
+
+        Item savedItem = itemRepository.save(new Item(title, stock));
+        redisInventoryService.setStock(savedItem.getId(), savedItem.getStock());
+
+        return ResponseEntity.ok(savedItem);
+
+    }
+
+
+
+
+    // High speed order requests
     @PostMapping("/orders/async")
     public ResponseEntity<String> placeOrderAsync(@RequestBody OrderRequest request) {
         // 1. Deduct stock atomically in Redis memory (<2ms)
-        Long remainingStock = redisInventoryService.deductStock(request.itemId(), 1);
 
+        // this will trigger LUA script if stock is aval deduct 1 item and send remaking stock, and if not send -1;
+        Long remainingStock = redisInventoryService.tryDeductStock(request.itemId(), 1);
+
+
+
+        // mean redis return -1, item not found mean empty
         if (remainingStock < 0) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("SOLD_OUT");
         }
 
-        // 2. Publish event to Kafka for background processing
+        //  Publish event to Kafka for background processing
         String orderId = UUID.randomUUID().toString();
         OrderPlacedEvent event = new OrderPlacedEvent(request.userId(), request.itemId(), orderId);
         orderProducer.sendOrderEvent(event);
 
-        // 3. Instantly respond to user with 202 ACCEPTED
+        //  Instantly respond to user with 202 ACCEPTED
         return ResponseEntity.status(HttpStatus.ACCEPTED)
                 .body("Order accepted! Processing ID: " + orderId);
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//
-//    private final RedisInventoryService redisInventoryService;
-//
-//    public FlashSaleController(RedisInventoryService redisInventoryService) {
-//        this.redisInventoryService = redisInventoryService;
-//    }
-//
-//    // Warm-up endpoint to initialize Redis stock before sale starts
-//    @PostMapping("/items/{itemId}/warmup")
-//    public ResponseEntity<String> warmUpCache(@PathVariable Long itemId, @RequestParam Integer stock) {
-//        redisInventoryService.setStock(itemId, stock);
-//        return ResponseEntity.ok("Stock of " + stock + " loaded into Redis for item " + itemId);
-//    }
-//
-//    // Step 2: High-concurrency optimized endpoint using Redis Lua
-//    @PostMapping("/orders/redis")
-//    public ResponseEntity<String> placeOrderRedis(@RequestBody OrderRequest request) {
-//        Long remainingStock = redisInventoryService.deductStock(request.itemId(), 1);
-//
-//        if (remainingStock < 0) {
-//            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Item is SOLD OUT!");
-//        }
-//
-//        // Stock successfully claimed in-memory!
-//        // (In Step 3, we will publish an asynchronous event to Kafka right here)
-//        return ResponseEntity.status(HttpStatus.ACCEPTED)
-//                .body("Stock claimed! Remaining stock: " + remainingStock);
-//    }
-
-
 
 
 
