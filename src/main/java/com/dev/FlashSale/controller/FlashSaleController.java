@@ -30,6 +30,8 @@ public class FlashSaleController {
 
 
 
+//    for testing
+//    curl -X POST "http://localhost:8080/api/v1/items?title=Phone&stock=10"
     @PostMapping("/items")
     public ResponseEntity<Item> createItem(@RequestParam String title, @RequestParam Integer stock) {
 
@@ -43,7 +45,13 @@ public class FlashSaleController {
 
 
 
-
+// seq 1 20 | xargs -P20 -I{} sh -c '
+// echo "User {}:"
+// curl -s -X POST http://localhost:8080/api/v1/orders/async \
+// -H "Content-Type: application/json" \
+// -d "{\"userId\":{},\"itemId\":1}"
+// echo
+'
     // High speed order requests
     @PostMapping("/orders/async")
     public ResponseEntity<String> placeOrderAsync(@RequestBody OrderRequest request) {
